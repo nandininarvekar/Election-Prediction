@@ -1,0 +1,171 @@
+import os
+import nltk
+from nltk.stem.wordnet import WordNetLemmatizer
+from nltk.corpus import twitter_samples, stopwords
+from nltk.tag import pos_tag
+from nltk.tokenize import word_tokenize
+from nltk import FreqDist, classify, NaiveBayesClassifier
+import pandas as pd
+import emoji
+import re, string, random
+
+
+
+def remove_noise(tweet_tokens, stop_words = ()):
+    cleaned_tokens = []
+
+    for token, tag in pos_tag(tweet_tokens):
+        token = re.sub('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+#]|[!*\(\),]|'\
+                       '(?:%[0-9a-fA-F][0-9a-fA-F]))+','', token)
+
+        token = re.sub("(@[A-Za-z0-9_]+)","", token)
+
+        token = emoji.demojize(token)
+
+        if tag.startswith("NN"):
+            pos='n'
+        elif tag.startswith('VB'):
+            pos = 'v'
+        else:
+            pos = 'a'
+
+        lemmatizer= WordNetLemmatizer()
+        token =lemmatizer.lemmatize(token, pos)
+
+        if (len(token) > 0) and (token not in string.punctuation) and (token.lower() not in stop_words):
+            cleaned_tokens.append(token.lower())
+    return cleaned_tokens
+
+
+
+def get_all_words(cleaned_tokens_list):
+    for tokens in cleaned_tokens_list:
+        for token in tokens:
+            yield  token
+
+
+
+def get_tweets_for_model(cleaned_tokens_list):
+    for tweet_tokens in cleaned_tokens_list:
+        yield  dict([token, True] for token in tweet_tokens)
+    
+#======================================================================================    
+
+if __name__ == "__main__":
+    stop_words = stopwords.words('english')
+
+    positive_tweet_tokens = twitter_samples.tokenized('positive_tweets.json')
+    negative_tweet_tokens = twitter_samples.tokenized('negative_tweets.json')
+
+    positive_cleaned_tokens_list = []
+    negative_cleaned_tokens_list = []
+
+    for tokens in positive_tweet_tokens:
+        positive_cleaned_tokens_list.append(remove_noise(tokens, stop_words))
+
+    for tokens in negative_tweet_tokens:
+        negative_cleaned_tokens_list.append(remove_noise(tokens, stop_words))
+
+    all_pos_words = get_all_words(positive_cleaned_tokens_list)
+
+
+    positive_tokens_for_model = get_tweets_for_model(positive_cleaned_tokens_list)
+    negative_tokens_for_model = get_tweets_for_model(negative_cleaned_tokens_list)
+
+    positive_dataset = [(tweet_dict, "Positive") for tweet_dict in positive_tokens_for_model]
+    negative_dataset = [(tweet_dict, "Negative") for tweet_dict in negative_tokens_for_model]
+
+    dataset = positive_dataset + negative_dataset
+    random.shuffle(dataset)
+
+    train_data = dataset[:7000]
+    test_data = dataset[7000:]
+
+    print('Training the Classifier!')
+    classifier = NaiveBayesClassifier.train(train_data)
+    print("Accuracy is of Trained Classifier is:", classify.accuracy(classifier, test_data))
+    print('Begin Classifying the Data!')
+
+    data_dir = os.path.dirname(os.path.realpath(__file__)) + "\datasets"
+    filelist = []
+    dirset = set()
+    for (dirpath, dirnames, filenames) in os.walk(data_dir):
+        for f in filenames:
+            dirset.add(dirpath)
+            filepath = dirpath + '\\' +f
+            filelist.append(filepath)
+
+    total_pos_count = {}
+    total_neg_count = {}
+
+    dir_pos_count = {}
+    dir_neg_count = {}
+
+    for f in filelist:
+        df = pd.read_csv(f)
+
+        print('\nClassifying the Data for ' + f)
+
+        pos_count = 0
+        neg_count = 0
+        for index, row in df.iterrows():
+            tokenised_tweet = remove_noise(word_tokenize(row['text']))
+            if(classifier.classify(dict([token, True] for token in tokenised_tweet)) == 'Positive'):
+                pos_count += 1
+            else:
+                neg_count += 1
+
+        total_pos_count[f] = pos_count
+        total_neg_count[f] = neg_count
+
+        print('Positive Count ' + str(pos_count))
+        print('Negative Count ' + str(neg_count))
+
+        for d in dirset:
+            if d in f:
+                if d not in dir_pos_count:
+                    dir_pos_count[d] = 0
+                    dir_neg_count[d] = 0
+                dir_pos_count[d] += pos_count
+                dir_neg_count[d] += neg_count
+
+    with open('results\\pos_count.txt', 'w') as f:
+        for key, value in total_pos_count.items():
+            f.write("%s - %s\n" % (key, value))
+
+    with open('results\\neg_count.txt', 'w') as f:
+        for key, value in total_neg_count.items():
+            f.write("%s - %s\n" % (key, value))
+
+    with open('results\\dir_pos_count.txt', 'w') as f:
+        for key, value in dir_pos_count.items():
+            f.write("%s - %s\n" % (key, value))
+
+    with open('results\\dir_neg_count.txt', 'w') as f:
+        for key, value in dir_neg_count.items():
+            f.write("%s - %s\n" % (key, value))
+            
+
+#==========================================================================
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+w = 0.4
+
+x = ["FiannaFail", "FineGael", "SinnFien"]
+positive = [56958, 14140, 39413]
+negative = [61475, 14168, 33399]
+
+bar1 = np.arange(len(x))
+bar2 = [i+w for i in bar1]
+
+plt.bar(bar1, positive, w, label="positive")
+plt.bar(bar2, negative, w, label="negative")
+
+plt.xlabel("Party")
+plt.ylabel("Votes")
+plt.xticks(bar1,x)
+plt.legend()
+plt.show()
